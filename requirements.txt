@@ -1,0 +1,30 @@
+fastapi
+uvicorn
+qdrant-client
+requests
+pdfplumber
+pymupdf
+pikepdf
+tenacity
+tiktoken
+prometheus-client
+celery[redis]
+redis
+transformers[sentencepiece]==4.40.0
+tokenizers==0.14.3
+fastapi
+uvicorn[standard]
+httpx
+asyncpg
+SQLAlchemy>=1.4
+alembic (optional)
+redis[asyncio]
+prometheus-client
+python-multipart
+qdrant-client
+pypdf
+celery[redis]
+minio
+transformers
+tokenizers
+tiktoken   # optional, only needed if you use tiktoken:... encodings

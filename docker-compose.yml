@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tender
+      POSTGRES_PASSWORD: tenderpass
+      POSTGRES_DB: tenderdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  app:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - minio
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    command: celery -A app.celery_app.celery_app worker --loglevel=info -Q ${CELERY_QUEUE:-ingest_queue}
+    depends_on:
+      - redis
+      - postgres
+      - qdrant
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+
+volumes:
+  postgres_data:
+  qdrant_storage:
+  minio_data:
