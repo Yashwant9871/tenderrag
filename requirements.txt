@@ -27,4 +27,5 @@ celery[redis]
 minio
 transformers
 tokenizers
-tiktoken   # optional, only needed if you use tiktoken:... encodings
+tiktoken 
+aiofiles
