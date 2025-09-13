@@ -1,0 +1,153 @@
+# =========================
+# Python / general
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+*.log
+
+# Virtual environments
+venv/
+venv.bak/
+.env/
+.env.*            # local env variants
+.venv/
+ENV/
+env/
+env.bak/
+venv3/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Secrets / credentials / keys
+*.pem
+*.key
+credentials/
+secret_key.txt
+*.env
+.env.local
+.env.*.local
+
+# Logs & runtime
+*.log
+logs/
+*.pid
+celerybeat-schedule
+celerybeat.pid
+gunicorn.pid
+gunicorn.log
+*.retry
+
+# Local data / uploads / caches
+.data/
+uploads/
+tmp/
+temp/
+.cache/
+.cache_loader/
+cache/
+minio_data/
+postgres_data/
+qdrant_storage/
+*.sqlite3
+*.db
+
+# Static build outputs
+staticfiles/
+assets/
+node_modules/
+dist/
+build/
+
+# OS generated files
+ehthumbs.db
+Icon?
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+docker-compose.*.yml
+.env.docker
+*.local
+.Dockerfile.swp
+
+# Python bytecode in wheels
+*.pyc
+*.pyd
+
+# Coverage / reports
+coverage/
+reports/
+
+# Misc
+*.bak
+*~ 
+*.swp
+*.swo
+
+# If you use poetry or pipenv
+poetry.lock
+Pipfile.lock
+
+# Optional: keep your API keys and tokens out of git
+# (this is redundant with *.env above but good to be explicit)
+secrets/
+keys/
+
+# Helpful: ignore generated openapi docs or swagger exports
+openapi.json
+openapi.yaml
