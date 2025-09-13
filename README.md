@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # TenderMind — README.md
 
 Yes, a README. The thing people only skim before yelling about missing tests. This one tells you how to run the app, why it exists, and how to avoid blowing up production. Short, useful, and annoyingly thorough — like me.
@@ -48,6 +49,67 @@ Also: Yashwant will rename the repo, Sanyam will forget to set `TOKENIZER_NAME`,
 Drop a working `.env` at repo root (see next section). Then:
 
 ```bash
+=======
+Table of contents
+
+Features
+
+Quickstart (dev)
+
+Environment variables
+
+Run locally (without Docker)
+
+Usage examples
+
+Tokenizers & chunking
+
+Qdrant collection & vector size
+
+Celery workers & tuning
+
+Metrics & monitoring
+
+Testing
+
+Security & secrets
+
+Development notes
+
+Contributing & license
+
+Features
+
+Token-aware chunking with deterministic chunk IDs and char_start/char_end offsets for accurate citations.
+
+Async embedding + chat client (DeepInfra) using httpx.
+
+Qdrant vector store with explicit DEEPINFRA_VECTOR_SIZE environment variable to create the collection safely.
+
+Celery worker to process ingestion asynchronously.
+
+Redis for job/status, Postgres for document metadata.
+
+Prometheus metrics (/metrics).
+
+Configurable tokenizer via TOKENIZER_NAME (supports HF fast tokenizers and tiktoken encodings).
+
+/upload endpoint for PDFs, /status/{doc_id} to check status, /qa/{doc_id} for retrieval-augmented QA.
+
+Quickstart (dev)
+Requirements
+
+Python 3.10+
+
+Docker & Docker Compose (recommended for quick local dev)
+
+git
+
+Start everything with Docker Compose
+
+Drop a working .env at repo root (see next section). Then:
+
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a
 # build & start services
 docker compose up -d --build
 
@@ -69,6 +131,11 @@ qdrant (Qdrant)
 
 minio (optional object storage)
 
+<<<<<<< HEAD
+=======
+If you run into port conflicts, check docker-compose.yml.
+
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a
 Environment variables
 
 Create .env (copy .env.example) and set required variables. Minimal important ones:
@@ -95,6 +162,10 @@ CELERY_QUEUE=ingest_queue
 # Uploads and limits
 UPLOAD_DIR=.data
 MAX_UPLOAD_SIZE=52428800
+<<<<<<< HEAD
+=======
+TOKENIZER_NAME=gpt2
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a
 
 # MinIO (optional)
 MINIO_ENDPOINT=minio:9000
@@ -183,6 +254,7 @@ Adjust Celery worker count to match CPU/IO and embedding throughput. Use separat
 
 Metrics & monitoring
 
+<<<<<<< HEAD
 /metrics exposes Prometheus counters:
 
 tender_uploads_total
@@ -194,6 +266,9 @@ tender_ingests_failed
 tender_qa_requests_total
 
 tender_embed_errors_total
+=======
+/metrics exposes Prometheus counters: tender_uploads_total, tender_ingests_total, tender_ingests_failed, tender_qa_requests_total, tender_embed_errors_total.
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a
 
 Add Prometheus to scrape http://app:8000/metrics.
 
@@ -237,6 +312,11 @@ git add -A && git commit -m "feat: descriptive message"
 
 Push branch and open PR; preserve CI that runs tests. Don’t push secrets. Rotate them if leaked.
 
+<<<<<<< HEAD
+=======
+If you need help producing a PR patch with the recent changes (tokenizer wiring, async DeepInfra, Postgres wiring), say so and I’ll make a tidy diff you can apply — begrudgingly helpful, as always.
+
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a
 Contributing
 
 Fork → branch → PR.
@@ -259,4 +339,8 @@ Check worker logs: docker compose logs -f worker
 
 Check Qdrant/Redis/Postgres logs in compose logs.
 
+<<<<<<< HEAD
 If you still can’t figure it out, open an issue with logs attached (do not attach .env or secrets).
+=======
+If you still can’t figure it out, open an issue with logs attached (do not attach .env or secrets).
+>>>>>>> 25cce73568511fa0aa4373a5e78814640a537b7a

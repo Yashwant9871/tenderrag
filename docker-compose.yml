@@ -69,3 +69,4 @@ volumes:
   postgres_data:
   qdrant_storage:
   minio_data:
+

@@ -12,6 +12,7 @@ Design goals:
  - predictable chunking so evidence citations map easily back to pages/chunk ids
  - minimal external dependencies (pypdf, requests/qdrant-client already in requirements)
 """
+import uuid
 
 from typing import List, Dict, Any, Iterable, Tuple
 import os
@@ -23,6 +24,7 @@ from dataclasses import dataclass, asdict
 # add transformers tokenizer
 from transformers import AutoTokenizer
 from typing import Dict, Optional, List, Tuple, Any
+import asyncio
 
 from app.config import settings
 from app.deepinfra import embed_batch
@@ -142,16 +144,49 @@ EMBED_BATCH = max(1, settings.embed_batch or 64)
 class Chunk:
     doc_id: str
     page: int
-    chunk_index: int
     text: str
     char_start: Optional[int] = None
     char_end: Optional[int] = None
-
+    tokens: Optional[int] = None
+    chunk_id: Optional[str] = None
+    chunk_index: Optional[int] = None   # added
 
     def id(self) -> str:
-        # stable deterministic id for chunk: docid-page-chunkindex-hash
-        h = hashlib.sha1(self.text.encode("utf-8")).hexdigest()[:10]
-        return f"{self.doc_id}::p{self.page}::c{self.chunk_index}::{h}"
+        """
+        Return a deterministic UUID string for this chunk.
+        If chunk_id (explicit) is set and is a valid UUID, return it.
+        Otherwise create a uuid5 using the doc UUID (if valid) as namespace
+        and a name composed of page+index+text-hash to remain deterministic.
+        """
+        # 1) if explicit chunk_id and valid UUID, use it
+        if self.chunk_id:
+            try:
+                _ = uuid.UUID(str(self.chunk_id))
+                return str(self.chunk_id)
+            except Exception:
+                # fall through to generate deterministic uuid
+                pass
+
+        # 2) compute stable name
+        # prefer chunk_index if present (keeps name short), otherwise fallback to text hash
+        name_parts = []
+        if self.page is not None:
+            name_parts.append(str(self.page))
+        if self.chunk_index is not None:
+            name_parts.append(str(self.chunk_index))
+        # short stable hash of text so repeated changes to other metadata won't change id unnecessarily
+        text_hash = hashlib.sha1((self.text or "").encode("utf-8")).hexdigest()[:12]
+        name_parts.append(text_hash)
+        name = "-".join(name_parts)
+
+        # if doc_id is a valid UUID, use it as namespace to generate deterministic UUIDv5
+        try:
+            namespace = uuid.UUID(self.doc_id)
+        except Exception:
+            namespace = uuid.NAMESPACE_DNS
+
+        generated = uuid.uuid5(namespace, name)
+        return str(generated)
 
     def payload(self) -> Dict[str, Any]:
         base = {
@@ -164,97 +199,118 @@ class Chunk:
             base["char_start"] = int(self.char_start)
         if self.char_end is not None:
             base["char_end"] = int(self.char_end)
+        if self.chunk_index is not None:
+            base["chunk_index"] = int(self.chunk_index)
         return base
     
-
 def chunk_page_text_tokenized(
-        page_text: str,
-        doc_id: str,
-        page_num: int,
-        chunk_tokens: int = 800,
-        overlap_tokens: int = 150,
-        tokenizer_name: Optional[str] = None
-    ):
-    if not page_text:
-        return []
-    tokenizer_name = tokenizer_name or settings.tokenizer_name
-    tok_wrapper = get_tokenizer_wrapper(tokenizer_name)
-
-    # Get tokenization with offsets
-    enc = tok_wrapper.encode_with_offsets(page_text)
-    input_ids = enc.get("input_ids", [])
-    offsets = enc.get("offsets", [])
-
-    # If offsets are empty (e.g., tiktoken fallback), try to also use HF gpt2 to get offsets
-    if not offsets:
-        if tokenizer_name.startswith("tiktoken:"):
-            try:
-                # try gpt2 for offsets as fallback, only for offset mapping
-                fallback = get_tokenizer_wrapper("gpt2")
-                enc2 = fallback.encode_with_offsets(page_text)
-                offsets = enc2.get("offsets", [])
-                logger.warning("Using gpt2 offsets as fallback for tiktoken encoding; offsets may not match tiktoken tokenization exactly.")
-            except Exception:
-                offsets = []
-
-    n_tokens = len(input_ids)
-    if n_tokens == 0 and not offsets:
+    page_text: str,
+    page_num: int,
+    doc_id: str,
+    chunk_tokens: int = 512,
+    overlap_tokens: int = 64,
+    tokenizer=None,
+    tokenizer_name: Optional[str] = None,
+) -> List[Chunk]:
+    """
+    Produce token-aware chunks for a single page.
+    Always returns a list of Chunk objects (no dicts).
+    """
+    text = (page_text or "").strip()
+    if not text:
         return []
 
-    # If offsets exist, use them. If not, create coarse char-based chunks
-    chunks = []
-    if offsets:
-        step = max(1, chunk_tokens - overlap_tokens)
-        index = 0
-        for start_token in range(0, n_tokens, step):
-            end_token = min(start_token + chunk_tokens, n_tokens)
-            char_start = offsets[start_token][0]
-            char_end = offsets[end_token - 1][1]
-            chunk_text = page_text[char_start:char_end].strip()
+    # resolve tokenizer wrapper if name provided
+    wrapper = None
+    if tokenizer is None and tokenizer_name:
+        try:
+            wrapper = get_tokenizer_wrapper(tokenizer_name)
+        except Exception as e:
+            logger.warning("Failed to get tokenizer wrapper '%s': %s. Falling back to char-split.", tokenizer_name, e)
+            wrapper = None
+    elif tokenizer is not None:
+        wrapper = tokenizer
+
+    chunks: List[Chunk] = []
+
+    # Try tokenization offsets via wrapper API
+    token_ids = None
+    token_offsets = None
+    try:
+        if wrapper is not None:
+            enc = wrapper.encode_with_offsets(text)
+            token_ids = enc.get("input_ids") or enc.get("ids")
+            token_offsets = enc.get("offsets") or enc.get("offset_mapping") or enc.get("offsets", [])
+            # Ensure token_offsets is list or None
+            if token_offsets == []:
+                token_offsets = None
+    except Exception as e:
+        logger.debug("Tokenizer wrapper failed on page %s of %s: %s. Falling back to char-split.", page_num, doc_id, e)
+        token_ids = None
+        token_offsets = None
+
+    # Token-offset based chunking (preferred if we have offsets)
+    if token_ids and token_offsets:
+        start_token = 0
+        total_tokens = len(token_ids)
+        if chunk_tokens <= 0:
+            raise ValueError("chunk_tokens must be > 0")
+        step = max(chunk_tokens - overlap_tokens, 1)
+        chunk_index = 0
+        while start_token < total_tokens:
+            end_token = min(start_token + chunk_tokens, total_tokens)
+            char_start = token_offsets[start_token][0] if start_token < len(token_offsets) else 0
+            char_end = token_offsets[end_token - 1][1] if (end_token - 1) < len(token_offsets) else len(text)
+
+            chunk_text = text[char_start:char_end].strip()
             if chunk_text:
-                from dataclasses import dataclass
-                import hashlib
-                cid_hash = hashlib.sha1(chunk_text.encode("utf-8")).hexdigest()[:10]
-                chunk = {
-                    "doc_id": doc_id,
-                    "page": page_num,
-                    "chunk_index": index,
-                    "text": chunk_text,
-                    "char_start": int(char_start),
-                    "char_end": int(char_end),
-                    "chunk_id": f"{doc_id}::p{page_num}::c{index}::{cid_hash}"
-                }
-                chunks.append(chunk)
-            index += 1
-            if end_token >= n_tokens:
+                chunks.append(Chunk(
+                    doc_id=doc_id,
+                    page=page_num,
+                    text=chunk_text,
+                    char_start=int(char_start),
+                    char_end=int(char_end),
+                    tokens=(end_token - start_token),
+                    chunk_id=None,
+                    chunk_index=chunk_index,
+                ))
+                chunk_index += 1
+
+            if end_token == total_tokens:
                 break
+            start_token += step
+
         return chunks
 
-    # final fallback: char sliding window
-    logger.warning("No token offsets available for tokenizer '%s'. Falling back to char-based chunking.", tokenizer_name)
-    CHUNK_SIZE = chunk_tokens * 4
-    OVERLAP = overlap_tokens * 4
-    start = 0
-    index = 0
-    while start < len(page_text):
-        end = start + CHUNK_SIZE
-        chunk_text = page_text[start:end].strip()
-        if chunk_text:
-            import hashlib
-            cid_hash = hashlib.sha1(chunk_text.encode("utf-8")).hexdigest()[:10]
-            chunks.append({
-                "doc_id": doc_id,
-                "page": page_num,
-                "chunk_index": index,
-                "text": chunk_text,
-                "char_start": start,
-                "char_end": min(len(page_text), end),
-                "chunk_id": f"{doc_id}::p{page_num}::c{index}::{cid_hash}"
-            })
-        index += 1
-        start += (CHUNK_SIZE - OVERLAP)
-    return chunks
+    # Fallback: character-based chunking approximating token sizes
+    est_chars_per_token = CHARS_PER_TOKEN
+    chunk_chars = max(100, chunk_tokens * est_chars_per_token)
+    overlap_chars = int(overlap_tokens * est_chars_per_token)
+    step_chars = max(1, chunk_chars - overlap_chars)
 
+    start = 0
+    text_len = len(text)
+    index = 0
+    while start < text_len:
+        end = min(start + chunk_chars, text_len)
+        chunk_text = text[start:end].strip()
+        if chunk_text:
+            chunks.append(Chunk(
+                doc_id=doc_id,
+                page=page_num,
+                text=chunk_text,
+                char_start=int(start),
+                char_end=int(end),
+                tokens=None,
+                chunk_id=None,
+                chunk_index=index,
+            ))
+            index += 1
+        if end == text_len:
+            break
+        start += step_chars
+
+    return chunks
 def chunk_document_tokenized(
         pages: List[Tuple[int, str]],
         doc_id: str,
@@ -263,13 +319,17 @@ def chunk_document_tokenized(
         tokenizer_name: str = "gpt2"
     ) -> List[Chunk]:
     """
-    Chunk all pages token-aware and return a flat list of chunks.
+    Chunk all pages token-aware and return a flat list of Chunk objects.
+    pages: List of (page_num, page_text)
     """
     all_chunks: List[Chunk] = []
     for page_num, page_text in pages:
         page_chunks = chunk_page_text_tokenized(
-            page_text, doc_id, page_num,
-            chunk_tokens=chunk_tokens, overlap_tokens=overlap_tokens,
+            page_text=page_text,
+            page_num=page_num,
+            doc_id=doc_id,
+            chunk_tokens=chunk_tokens,
+            overlap_tokens=overlap_tokens,
             tokenizer_name=tokenizer_name
         )
         all_chunks.extend(page_chunks)
@@ -431,15 +491,22 @@ def process_pdf(path: str, doc_id: str, remove_after: bool = False):
     total = len(chunks)
     processed = 0
     for chunk_batch in batch_iterable(chunks, EMBED_BATCH):
-        texts = [c.text for c in chunk_batch]
+        texts = [c.text if hasattr(c, "text") else c.get("text") for c in chunk_batch]
 
-        # embedding with retries
-        def _embed_call():
-            return embed_batch(texts, batch_size=EMBED_BATCH)
+        # embed_batch is async -> run it synchronously in this worker
+        try:
+            embeddings = asyncio.run(embed_batch(texts, batch_size=EMBED_BATCH))
+        except Exception as e:
+            # fallback if embed_batch signature doesn't accept batch_size param
+            logger.debug("embed_batch call with batch_size failed: %s. Retrying without batch_size.", e)
+            embeddings = asyncio.run(embed_batch(texts))
 
-        embeddings = _retry(_embed_call, tries=3, initial_delay=1.0, backoff=2.0, log_prefix="[embed] ")
+        if not hasattr(embeddings, "__len__"):
+            raise TypeError(f"embed_batch returned non-sequence {type(embeddings)}. Did you forget to await?")
 
-        # upsert to qdrant
+        if len(chunk_batch) != len(embeddings):
+            raise ValueError(f"chunk/embedding mismatch: {len(chunk_batch)} vs {len(embeddings)}")
+
         upsert_chunks_to_qdrant(client, collection, chunk_batch, embeddings)
 
         processed += len(chunk_batch)

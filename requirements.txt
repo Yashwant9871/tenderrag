@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 qdrant-client
 requests
 pdfplumber
@@ -8,24 +8,19 @@ pikepdf
 tenacity
 tiktoken
 prometheus-client
-celery[redis]
-redis
-transformers[sentencepiece]==4.40.0
-tokenizers==0.14.3
-fastapi
-uvicorn[standard]
+celery>=5.2,<6         # modern Celery (avoids Kombu 3.x/2to3)
+kombu>=5.2,<6          # force modern kombu (prevents use_2to3 error)
+redis[asyncio]>=4.5    # redis client; include asyncio extra if you use it
+transformers
+tokenizers
 httpx
 asyncpg
 SQLAlchemy>=1.4
-alembic (optional)
-redis[asyncio]
-prometheus-client
 python-multipart
-qdrant-client
 pypdf
-celery[redis]
 minio
-transformers
-tokenizers
-tiktoken 
 aiofiles
+qdrant-client           # kept once
+pydantic_settings
+asyncpg
+pypdf
