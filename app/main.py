@@ -11,8 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import aiofiles
 import asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends, HTTPException
 
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter
 
@@ -21,8 +19,6 @@ from app.deepinfra import embed_batch, chat_completion
 from app.qdrant_client import get_qdrant_client
 from app.tasks import process_pdf_task
 from app.db import init_models, get_async_session
-from app.db import init_models, close_engine
-
 import redis.asyncio as aioredis
 import json
 from app.models import Document
@@ -243,58 +239,22 @@ def mmr_select(question_emb: np.ndarray, candidate_embs: np.ndarray, candidates:
         selected.append(candidates[next_i])
     return selected
 
-@app.get("/healthz")
-async def healthz():
-    # quick checks: redis and qdrant client ping (non-blocking)
-    r = get_redis()
-    ok = {"redis": False, "qdrant": False}
-    try:
-        await r.ping()
-        ok["redis"] = True
-    except Exception:
-        logger.exception("Redis ping failed")
-    try:
-        client = get_qdrant_client()
-        # if your client has health/collections call it, else a no-op
-        await asyncio.wait_for(asyncio.to_thread(lambda: client.get_collections()), timeout=2.0)
-        ok["qdrant"] = True
-    except Exception:
-        logger.exception("Qdrant health check failed")
-    status = 200 if all(ok.values()) else 503
-    return JSONResponse(ok, status_code=status)
-
-@app.on_event("shutdown")
-async def shutdown():
-    global _httpx_client, _redis
-    try:
-        if _httpx_client is not None:
-            await _httpx_client.aclose()
-    except Exception:
-        logger.exception("Failed to close httpx client on shutdown")
-    if _redis is not None:
-        try:
-            await _redis.close()
-        except Exception:
-            logger.exception("Failed to close redis on shutdown")
 
 # ---------- Modified /qa handler using reranker + MMR (optimized) ----------
 @app.post("/qa/{doc_id}")
-async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSession = Depends(get_async_session),):
+async def qa(doc_id: str, request: QARequest):
     qa_requests_total.inc()
-    q = body.q.strip()
-    doc = await session.get(Document, doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="doc_id not found")
+    q = request.q.strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty question")
+
     client = get_qdrant_client()
 
     t0 = time.perf_counter()
-    if not await allow_request(f"qa:{request.client.host}", limit=20, period=60):
-        raise HTTPException(status_code=429, detail="Too many requests")
+
     # 1) get question embedding (async)
     try:
-        qvecs = await asyncio.to_thread(lambda: embed_batch([q], batch_size=settings.embed_batch))
+        qvecs = await embed_batch([q], batch_size=settings.embed_batch)
         if not qvecs or not isinstance(qvecs, list):
             raise ValueError("embed_batch returned unexpected shape")
         qvec = qvecs[0]
@@ -305,8 +265,7 @@ async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSessio
     t1 = time.perf_counter()
 
     # 2) initial Qdrant search (pull enough candidates)
-    initial_k = min(max(request.limit, INITIAL_K), getattr(settings, "max_initial_k", 200))
-
+    initial_k = max(request.limit or 0, INITIAL_K)
     try:
         hits = await asyncio.to_thread(lambda: client.search(
             collection_name=settings.collection,
@@ -398,12 +357,11 @@ async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSessio
     # 4) Prepare candidate embeddings for MMR selection
     try:
         # Prefer stored vectors (fast). If not available, compute embeddings for only top-N candidates.
-        stored_vecs = [v for v in (c.get("stored_vector") for c in candidates) if v is not None]
-        if stored_vecs and all(getattr(v, "shape", None) == stored_vecs[0].shape for v in stored_vecs):
+        stored_vecs = [c["stored_vector"] for c in candidates]
+        if all(v is not None for v in stored_vecs):
             candidate_embs = np.vstack(stored_vecs)
-            # filter candidates accordingly (only those with stored_vector)
-            filtered_candidates = [c for c in candidates if c.get("stored_vector") is not None]
-            final_selected = mmr_select(q_emb_for_mmr, candidate_embs, filtered_candidates, top_k=FINAL_K, lambda_param=MMR_LAMBDA)
+            q_emb_for_mmr = np.array(qvec)
+            final_selected = mmr_select(q_emb_for_mmr, candidate_embs, candidates, top_k=FINAL_K, lambda_param=MMR_LAMBDA)
         else:
             # fallback: embed only top-EMBED_FALLBACK_TOPK candidates to save time
             to_embed_candidates = candidates[: EMBED_FALLBACK_TOPK]
@@ -429,8 +387,7 @@ async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSessio
     evidence: List[Dict[str, Any]] = []
     for i, c in enumerate(final_selected):
         payload = c.get("payload", {}) or {}
-        TRUNCATE_CHARS = min(400, MAX_SLICE_CHARS)
-        ev_text = (c.get("text") or "")[:TRUNCATE_CHARS].replace("\n"," ")
+        ev_text = (c.get("text") or "")[:400].replace("\n", " ")
         evidence.append({
             "idx": i + 1,
             "page": payload.get("page"),
@@ -465,15 +422,6 @@ async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSessio
 
     return {"answer": ans, "evidence": evidence}
 
-
-async def allow_request(key: str, limit: int, period: int = 60) -> bool:
-    r = get_redis()
-    now = int(time.time())
-    bucket_key = f"rate:{key}:{now // period}"
-    val = await r.incr(bucket_key)
-    if val == 1:
-        await r.expire(bucket_key, period + 1)
-    return val <= limit
 
 @app.get("/metrics")
 def metrics():
