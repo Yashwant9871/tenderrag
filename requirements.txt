@@ -1,26 +1,38 @@
-fastapi
-uvicorn[standard]
-qdrant-client
-requests
-pdfplumber
-pymupdf
-pikepdf
-tenacity
-tiktoken
-prometheus-client
-celery>=5.2,<6         # modern Celery (avoids Kombu 3.x/2to3)
-kombu>=5.2,<6          # force modern kombu (prevents use_2to3 error)
-redis[asyncio]>=4.5    # redis client; include asyncio extra if you use it
-transformers
-tokenizers
-httpx
-asyncpg
-SQLAlchemy>=1.4
-python-multipart
-pypdf
-minio
-aiofiles
-qdrant-client           # kept once
-pydantic_settings
-asyncpg
-pypdf
+# Core web
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+
+# HTTP + async utils
+httpx==0.28.1
+aiofiles==23.1.0
+python-multipart==0.0.6
+
+# Background tasks / queue
+celery==5.5.3
+redis==6.4.0
+
+# DB / migrations
+SQLAlchemy==2.0.43
+asyncpg==0.27.0
+alembic==1.11.1
+
+# Vector store / clients
+qdrant-client==1.15.1
+
+# Embeddings / LLM infra (replace if you use a different provider)
+tenacity==8.2.2
+
+# Config / env
+python-dotenv==1.0.0
+pydantic==2.11.9
+
+# Observability / metrics
+prometheus-client==0.17.0
+structlog==22.3.0
+
+# Dev/test helpers (optional, keep in dev-requirements)
+pytest==8.4.2
+pytest-asyncio==1.2.0
+ruff==0.13.0
+mypy==1.18.1
+black==24.3.0
