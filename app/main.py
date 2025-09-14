@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import aiofiles
 import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, HTTPException
 
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter
 
@@ -19,6 +21,8 @@ from app.deepinfra import embed_batch, chat_completion
 from app.qdrant_client import get_qdrant_client
 from app.tasks import process_pdf_task
 from app.db import init_models, get_async_session
+from app.db import init_models, close_engine
+
 import redis.asyncio as aioredis
 import json
 from app.models import Document
@@ -275,11 +279,10 @@ async def shutdown():
 
 # ---------- Modified /qa handler using reranker + MMR (optimized) ----------
 @app.post("/qa/{doc_id}")
-async def qa(doc_id: str, body: QARequest, request: Request):
+async def qa(doc_id: str, body: QARequest, request: Request,session: AsyncSession = Depends(get_async_session),):
     qa_requests_total.inc()
     q = body.q.strip()
-    async with get_async_session() as session:
-        doc = await session.get(Document, doc_id)
+    doc = await session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="doc_id not found")
     if not q:

@@ -1,38 +1,60 @@
 # app/db.py
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+import logging
+from typing import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+)
 from app.config import settings
 from app.models import Base
-import asyncio
-import logging
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(settings.database_url, echo=False, future=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# Engine: tune pool size via env/config (SQLAlchemy will pass through to asyncpg)
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    future=True,
+    # Optional tuning:
+    # pool_size=settings.db_pool_size,
+    # max_overflow=settings.db_max_overflow,
+)
 
-async def init_models():
-    # create tables if not exist (simple approach; for prod use migrations)
+# Use async_sessionmaker (SQLAlchemy 1.4+/2.0 style for async)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def init_models() -> None:
+    """
+    Development helper that creates tables from ORM metadata.
+    In production, prefer Alembic migrations instead of create_all().
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created/checked")
 
-# helper for startup
-def get_async_session():
-    return AsyncSessionLocal()
+
+async def close_engine() -> None:
+    """Call this on app shutdown to cleanly dispose connection pool."""
+    await engine.dispose()
+    logger.info("Database engine disposed")
 
 
-class Document(Base):
-    __tablename__ = "documents"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), nullable=False)   # user id who uploaded
-    filename = Column(String, nullable=False)
-    storage_path = Column(String, nullable=False)           # local path or minio object name
-    storage_backend = Column(String, nullable=False, default="local")  # "local" or "minio"
-    status = Column(String, nullable=False, default="queued")
-    uploaded_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-    pages = Column(Integer, default=0)
-    chunks = Column(Integer, default=0)
-    error = Column(Text, nullable=True)
-    size = Column(Integer, default=0)  # bytes
-    removed = Column(Boolean, default=False)
+# FastAPI dependency
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Use in FastAPI routes like:
+        async def endpoint(session: AsyncSession = Depends(get_async_session)):
+            ...
+    Ensures session is closed and rolled back on error.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
