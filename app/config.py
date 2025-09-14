@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # batching
     embed_batch: int = Field(64, env="EMBED_BATCH")
-    upsert_batch: int = Field(128, env="UPsert_BATCH")
+    upsert_batch: int = Field(128, env="UPSERT_BATCH")
     database_url: str = Field(..., env="DATABASE_URL")
     # CORS
     cors_origins: List[str] = Field(["*"], env="CORS_ORIGINS")

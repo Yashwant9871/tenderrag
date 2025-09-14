@@ -5,9 +5,8 @@ celery_app = Celery(
     "tender_ingest",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks"],   # <<-- ensure tasks module is imported on worker start
+    include=["app.tasks"],
 )
-
 celery_app.conf.task_routes = {
     "app.tasks.process_pdf_task": {"queue": settings.celery_queue}
 }

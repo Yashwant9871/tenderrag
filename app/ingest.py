@@ -351,6 +351,11 @@ def extract_text_from_pdf(path: str) -> List[Tuple[int, str]]:
     Extract text by page from a PDF. Returns list of tuples (page_number (1-based), text).
     Keeps pages empty-string if extraction fails for that page to preserve page numbering.
     """
+    try:
+        from pypdf import PdfReader
+    except Exception as e:
+        logger.exception("pypdf not installed or failed to import: %s", e)
+        raise
     reader = PdfReader(path)
     pages_text = []
     for i, page in enumerate(reader.pages):
